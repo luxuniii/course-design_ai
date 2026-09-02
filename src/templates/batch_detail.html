@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>批次详情 - 半导体产线智能质量预警系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>批次详情 <small class="text-muted" id="batchId">#{{ batch_id }}</small></h2>
+            <a href="/batch/list" class="btn btn-outline-secondary">返回列表</a>
+        </div>
+
+        <!-- 批次基本信息 -->
+        <div class="card mb-4">
+            <div class="card-header">基本信息</div>
+            <div class="card-body" id="baseInfo">
+                加载中...
+            </div>
+        </div>
+
+        <!-- 智能分析操作区 -->
+        <div class="card mb-4">
+            <div class="card-body text-center">
+                <button id="analyzeBtn" class="btn btn-lg btn-success" onclick="doAnalyze()">执行智能分析</button>
+                <div id="analyzeTip" class="mt-2 text-muted">点击按钮对该批次执行降维、异常检测、质量预测全流程分析</div>
+            </div>
+        </div>
+
+        <!-- 分析结果区 -->
+        <div class="row" id="resultArea" style="display:none;">
+            <!-- PCA降维结果 -->
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-header bg-primary text-white">高维特征降维 (PCA)</div>
+                    <div class="card-body">
+                        <p><strong>第一主成分：</strong><span id="pcaX">-</span></p>
+                        <p><strong>第二主成分：</strong><span id="pcaY">-</span></p>
+                        <p class="text-muted small">将590维传感器特征压缩至二维，用于可视化与异常判定</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 异常检测结果 -->
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-header bg-warning text-dark">工艺异常检测</div>
+                    <div class="card-body">
+                        <p><strong>风险得分：</strong><span id="anomalyScore">-</span></p>
+                        <p><strong>风险等级：</strong><span id="anomalyLevel" class="badge">-</span></p>
+                        <p class="text-muted small">基于孤立森林算法识别工艺过程中的异常模式</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 质量预测结果 -->
+            <div class="col-md-4">
+                <div class="card h-100">
+                    <div class="card-header bg-success text-white">质量预测结果</div>
+                    <div class="card-body">
+                        <p><strong>预测结果：</strong><span id="qualityLabel">-</span></p>
+                        <p><strong>置信度：</strong><span id="qualityConf">-</span></p>
+                        <p class="text-muted small">基于随机森林模型提前预判批次最终质量</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var batchId = {{ batch_id }};
+
+        // 页面加载获取基本信息
+        window.onload = function() {
+            loadBaseInfo();
+        };
+
+        function loadBaseInfo() {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', '/api/batch/' + batchId, true);
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    var res = JSON.parse(xhr.responseText);
+                    var data = res.data;
+                    var result = data.final_result === 0 ? '合格' : '失效';
+                    document.getElementById('baseInfo').innerHTML = 
+                        '<p><strong>批次编号：</strong>' + data.batch_code + '</p>' +
+                        '<p><strong>真实质量结果：</strong>' + result + '</p>' +
+                        '<p><strong>数据集类型：</strong>' + data.split_type + '</p>';
+                }
+            };
+            xhr.send();
+        }
+
+        function doAnalyze() {
+            var btn = document.getElementById('analyzeBtn');
+            btn.disabled = true;
+            btn.innerText = '分析中...';
+            document.getElementById('analyzeTip').innerText = '正在执行三项算法分析，请稍候...';
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/model/predict/' + batchId, true);
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    var res = JSON.parse(xhr.responseText);
+                    var data = res.data;
+                    
+                    // 填充PCA结果
+                    document.getElementById('pcaX').innerText = data.pca.x.toFixed(4);
+                    document.getElementById('pcaY').innerText = data.pca.y.toFixed(4);
+                    
+                    // 填充异常检测结果
+                    document.getElementById('anomalyScore').innerText = data.anomaly.score.toFixed(2);
+                    var levelBadge = document.getElementById('anomalyLevel');
+                    levelBadge.innerText = data.anomaly.level;
+                    if (data.anomaly.level === '高风险') {
+                        levelBadge.className = 'badge bg-danger';
+                    } else if (data.anomaly.level === '中风险') {
+                        levelBadge.className = 'badge bg-warning text-dark';
+                    } else {
+                        levelBadge.className = 'badge bg-success';
+                    }
+                    
+                    // 填充质量预测结果
+                    document.getElementById('qualityLabel').innerText = data.quality.label === 0 ? '合格' : '失效';
+                    document.getElementById('qualityConf').innerText = (data.quality.confidence * 100).toFixed(2) + '%';
+                    
+                    // 显示结果区
+                    document.getElementById('resultArea').style.display = 'flex';
+                    document.getElementById('analyzeTip').innerText = '✅ 分析完成，结果已存入数据库';
+                } else {
+                    document.getElementById('analyzeTip').innerText = '❌ 分析失败，请检查后端服务';
+                }
+                btn.disabled = false;
+                btn.innerText = '重新执行分析';
+            };
+            xhr.onerror = function() {
+                document.getElementById('analyzeTip').innerText = '❌ 网络错误';
+                btn.disabled = false;
+                btn.innerText = '执行智能分析';
+            };
+            xhr.send();
+        }
+    </script>
+</body>
+</html>
