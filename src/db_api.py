@@ -214,3 +214,4 @@ def get_all_results():
         return [dict(row) for row in rows]
     finally:
         conn.close()
+
